@@ -78,6 +78,7 @@ export class EthersEth1Notifier extends EventEmitter implements Eth1Notifier {
     const genesisEth1Data: Eth1Data = {
       depositRoot,
       blockHash,
+      depositCount,
     };
 
     this.chainStarted = true;

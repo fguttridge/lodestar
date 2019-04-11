@@ -39,10 +39,9 @@ export default class BlockProcessingService {
     // Note: To calculate state_root, the validator should first run the state transition function on an unsigned block
     // containing a stub for the state_root. It is useful to be able to run a state transition function that does not
     // validate signatures or state root for this purpose.
-    block.parentRoot = hashTreeRoot(prevBlock, BeaconBlock);
+    block.previousBlockRoot = hashTreeRoot(prevBlock, BeaconBlock);
     block.stateRoot = hashTreeRoot(curState, BeaconState);
     // TODO remove stub and use blsSign
-    block.randaoReveal = new Buffer(0);
   }
 
   /**

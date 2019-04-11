@@ -70,15 +70,14 @@ export class BeaconChain extends EventEmitter {
     let state = await this.db.getState();
     const isValidBlock = await this.isValidBlock(state, block);
     assert(isValidBlock);
-    const headRoot = await this.db.getChainHeadRoot()
 
     // process skipped slots
     for (let i = state.slot; i < block.slot - 1; i++) {
-      state = this.runStateTransition(headRoot, null, state);
+      state = this.runStateTransition(null, state);
     }
     
     // process current slot
-    state = this.runStateTransition(headRoot, block, state);
+    state = this.runStateTransition(block, state);
 
     await this.db.setBlock(block);
 
@@ -95,7 +94,7 @@ export class BeaconChain extends EventEmitter {
    */
   public async applyForkChoiceRule(): Promise<void> {
     const state = await this.db.getState();
-    const currentJustifiedRoot = getBlockRoot(state, getEpochStartSlot(state.justifiedEpoch));
+    const currentJustifiedRoot = getBlockRoot(state, getEpochStartSlot(state.currentJustifiedEpoch));
     // const currentJustifiedRoot = state.currentJustifiedRoot;
     const currentJustifiedBlock = await this.db.getBlock(currentJustifiedRoot);
     const currentJustifiedState = await this.db.getJustifiedState();
@@ -112,7 +111,7 @@ export class BeaconChain extends EventEmitter {
    */
   public async isValidBlock(state: BeaconState, block: BeaconBlock): Promise<boolean> {
     // The parent block with root block.previous_block_root has been processed and accepted.
-    const hasParent = await this.db.hasBlock(block.parentRoot);
+    const hasParent = await this.db.hasBlock(block.previousBlockRoot);
     if (!hasParent) {
       return false;
     }
@@ -128,8 +127,8 @@ export class BeaconChain extends EventEmitter {
     return true;
   }
 
-  private runStateTransition(headRoot: bytes32, block: BeaconBlock | null, state: BeaconState): BeaconState {
-    const newState = executeStateTransition(state, block, headRoot);
+  private runStateTransition(block: BeaconBlock | null, state: BeaconState): BeaconState {
+    const newState = executeStateTransition(state, block);
     // TODO any extra processing, eg post epoch
     // TODO update ffg checkpoints (requires updated state object)
     return newState;

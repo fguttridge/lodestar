@@ -1,6 +1,6 @@
 import assert from "assert";
 
-import {hashTreeRoot} from "@chainsafe/ssz";
+import {signingRoot} from "@chainsafe/ssz";
 
 import {
   BeaconBlock,
@@ -10,14 +10,15 @@ import {
 
 import {
   Domain,
-  EMPTY_SIGNATURE,
   MAX_VOLUNTARY_EXITS,
+  FAR_FUTURE_EPOCH,
+  PERSISTENT_COMMITTEE_PERIOD,
 } from "../../../constants";
 
 import {
   getCurrentEpoch,
   getDomain,
-  getEntryExitEffectEpoch,
+  isActiveValidator,
 } from "../../helpers/stateTransitionHelpers";
 
 import {
@@ -26,26 +27,39 @@ import {
 
 import { blsVerify } from "../../../stubs/bls";
 
-export default function processVoluntaryExits(state: BeaconState, block: BeaconBlock): void {
+/**
+ * Process ``VoluntaryExit`` operation.
+ * Note that this function mutates ``state``.
+ * @param {BeaconState} state
+ * @param {VoluntaryExit} exit
+ */
+export function processVoluntaryExit(state: BeaconState, exit: VoluntaryExit): void {
+  const validator = state.validatorRegistry[exit.validatorIndex];
   const currentEpoch = getCurrentEpoch(state);
+  // Verify the validator is active
+  assert(isActiveValidator(validator, currentEpoch));
+  // Verify the validator has not yet exited
+  assert(validator.exitEpoch === FAR_FUTURE_EPOCH);
+  // Verify the validator has not initiated an exit
+  assert(!validator.initiatedExit);
+  // Exits must specify an epoch when they become valid; they are not valid before then
+  assert(currentEpoch >= exit.epoch);
+  // Verify the validator has been active long enough
+  assert(currentEpoch - validator.activationEpoch >= PERSISTENT_COMMITTEE_PERIOD);
+  // Verify signature
+  assert(blsVerify(
+    validator.pubkey,
+    signingRoot(exit, VoluntaryExit),
+    exit.signature,
+    getDomain(state.fork, exit.epoch, Domain.VOLUNTARY_EXIT),
+  ));
+  // Initiate exit
+  initiateValidatorExit(state, exit.validatorIndex);
+}
+
+export default function processVoluntaryExits(state: BeaconState, block: BeaconBlock): void {
   assert(block.body.voluntaryExits.length <= MAX_VOLUNTARY_EXITS);
   for (const exit of block.body.voluntaryExits) {
-    const validator = state.validatorRegistry[exit.validatorIndex];
-    assert(validator.exitEpoch > getEntryExitEffectEpoch(currentEpoch));
-    assert(currentEpoch >= exit.epoch);
-    const v: VoluntaryExit = {
-      epoch: exit.epoch,
-      validatorIndex: exit.validatorIndex,
-      signature: EMPTY_SIGNATURE,
-    };
-    const exitMessage = hashTreeRoot(v, VoluntaryExit);
-    const exitMessageVerified = blsVerify(
-      validator.pubkey,
-      exitMessage,
-      exit.signature,
-      getDomain(state.fork, exit.epoch, Domain.EXIT),
-    );
-    assert(exitMessageVerified);
-    initiateValidatorExit(state, exit.validatorIndex);
+    processVoluntaryExit(state, exit);
   }
 }

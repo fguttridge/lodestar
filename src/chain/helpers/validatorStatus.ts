@@ -1,5 +1,3 @@
-import assert from "assert";
-
 import {
   BeaconState,
   ValidatorIndex,
@@ -7,18 +5,20 @@ import {
 
 import {
   GENESIS_EPOCH,
-  INITIATED_EXIT,
   LATEST_SLASHED_EXIT_LENGTH,
   MIN_VALIDATOR_WITHDRAWAL_DELAY,
-  WHISTLEBLOWER_REWARD_QUOTIENT,
+  FAR_FUTURE_EPOCH,
+  WHISTLEBLOWING_REWARD_QUOTIENT,
+  PROPOSER_REWARD_QUOTIENT,
 } from "../../constants";
 
 import {
   getBeaconProposerIndex,
   getCurrentEpoch,
   getEffectiveBalance,
-  getEntryExitEffectEpoch,
-  getEpochStartSlot,
+  getDelayedActivationExitEpoch,
+  increaseBalance,
+  decreaseBalance,
 } from "./stateTransitionHelpers";
 
 /**
@@ -29,7 +29,7 @@ import {
  */
 export function activateValidator(state: BeaconState, index: ValidatorIndex, isGenesis: boolean): void {
   const validator = state.validatorRegistry[index];
-  validator.activationEpoch = isGenesis ? GENESIS_EPOCH : getEntryExitEffectEpoch(getCurrentEpoch(state));
+  validator.activationEpoch = isGenesis ? GENESIS_EPOCH : getDelayedActivationExitEpoch(getCurrentEpoch(state));
 }
 
 /**
@@ -39,9 +39,8 @@ export function activateValidator(state: BeaconState, index: ValidatorIndex, isG
  * @param {ValidatorIndex} index
  */
 export function initiateValidatorExit(state: BeaconState, index: ValidatorIndex): void {
-  // TODO: Unsafe usage of toNumber for index
   const validator = state.validatorRegistry[index];
-  validator.statusFlags = validator.statusFlags.or(INITIATED_EXIT);
+  validator.initiatedExit = true;
 }
 /**
  * Exit the validator of the given ``index``.
@@ -52,40 +51,38 @@ export function initiateValidatorExit(state: BeaconState, index: ValidatorIndex)
 export function exitValidator(state: BeaconState, index: ValidatorIndex): void {
   const validator = state.validatorRegistry[index];
 
-  // The following updates only occur if not previously exited
-  const entryExitEffectEpoch = getEntryExitEffectEpoch(getCurrentEpoch(state));
-  if (validator.exitEpoch <= entryExitEffectEpoch) {
-    return;
+  // Update validator exit epoch if not previously exited
+  if (validator.exitEpoch === FAR_FUTURE_EPOCH) {
+    validator.exitEpoch = getDelayedActivationExitEpoch(getCurrentEpoch(state));
   }
-
-  validator.exitEpoch = entryExitEffectEpoch;
 }
 
 /**
- * Slash the validator with index ``index``.
+ * Slash the validator with index ``slashedIndex``.
  * Note that this function mutates ``state``.
  * @param {BeaconState} state
- * @param {ValidatorIndex} index
+ * @param {ValidatorIndex} shashedIndex
+ * @param {ValidatorIndex} whistleblowerIndex
  */
-export function slashValidator(state: BeaconState, index: ValidatorIndex): void {
-  const validator = state.validatorRegistry[index];
+export function slashValidator(state: BeaconState, slashedIndex: ValidatorIndex, whistleblowerIndex: ValidatorIndex | null = null): void {
   const currentEpoch = getCurrentEpoch(state);
-  // Remove assertion in phase 2
-  assert(state.slot < getEpochStartSlot(validator.withdrawalEpoch));
 
-  exitValidator(state, index);
+  exitValidator(state, slashedIndex);
+  state.validatorRegistry[slashedIndex].slashed = true;
+  state.validatorRegistry[slashedIndex].withdrawableEpoch = currentEpoch + LATEST_SLASHED_EXIT_LENGTH;
+  const slashedBalance = getEffectiveBalance(state, slashedIndex);
   state.latestSlashedBalances[currentEpoch % LATEST_SLASHED_EXIT_LENGTH] =
-    state.latestSlashedBalances[currentEpoch % LATEST_SLASHED_EXIT_LENGTH].add(getEffectiveBalance(state, index));
+    state.latestSlashedBalances[currentEpoch % LATEST_SLASHED_EXIT_LENGTH].add(slashedBalance);
 
-  const whistleblowerIndex = getBeaconProposerIndex(state, state.slot);
-  const whistleblowerReward = getEffectiveBalance(state, index).divn(WHISTLEBLOWER_REWARD_QUOTIENT);
-  state.validatorBalances[whistleblowerIndex] =
-    state.validatorBalances[whistleblowerIndex].add(whistleblowerReward);
-  state.validatorBalances[index] =
-    state.validatorBalances[index].sub(whistleblowerReward);
-
-  validator.slashedEpoch = currentEpoch;
-  validator.withdrawalEpoch = currentEpoch + LATEST_SLASHED_EXIT_LENGTH;
+  const proposerIndex = getBeaconProposerIndex(state, state.slot);
+  if (whistleblowerIndex === undefined || whistleblowerIndex === null) {
+    whistleblowerIndex = proposerIndex;
+  }
+  const whistleblowingReward = slashedBalance.divn(WHISTLEBLOWING_REWARD_QUOTIENT);
+  const proposerReward = whistleblowingReward.divn(PROPOSER_REWARD_QUOTIENT)
+  increaseBalance(state, proposerIndex, proposerReward);
+  increaseBalance(state, whistleblowerIndex, whistleblowingReward.sub(proposerReward));
+  decreaseBalance(state, slashedIndex, whistleblowingReward);
 }
 
 /**
@@ -97,5 +94,5 @@ export function slashValidator(state: BeaconState, index: ValidatorIndex): void 
  */
 export function prepareValidatorForWithdrawal(state: BeaconState, index: ValidatorIndex): void {
   const validator = state.validatorRegistry[index];
-  validator.withdrawalEpoch = getCurrentEpoch(state) + MIN_VALIDATOR_WITHDRAWAL_DELAY;
+  validator.withdrawableEpoch = getCurrentEpoch(state) + MIN_VALIDATOR_WITHDRAWAL_DELAY;
 }

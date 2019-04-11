@@ -10,19 +10,19 @@ import {randBetween} from "./misc";
  * @param {number} justifiedEpochValue
  * @returns {AttestationData}
  */
-export function generateAttestationData(slot: Slot, justifiedEpoch: Epoch): AttestationData {
+export function generateAttestationData(slot: Slot, sourceEpoch: Epoch): AttestationData {
   return {
     slot,
+    beaconBlockRoot: Buffer.alloc(32),
+    sourceEpoch: sourceEpoch,
+    sourceRoot: Buffer.alloc(32),
+    targetRoot: Buffer.alloc(32),
     shard: randBetween(0, 1024),
-    beaconBlockRoot: Buffer.alloc(65),
-    epochBoundaryRoot: Buffer.alloc(65),
-    shardBlockRoot: Buffer.alloc(65),
-    latestCrosslink: {
+    previousCrosslink: {
       epoch: slotToEpoch(slot),
-      shardBlockRoot: Buffer.alloc(65),
+      crosslinkDataRoot: Buffer.alloc(32),
     },
-    justifiedEpoch: justifiedEpoch,
-    justifiedBlockRoot: Buffer.alloc(65),
+    crosslinkDataRoot: Buffer.alloc(32),
   };
 }
 
@@ -31,16 +31,16 @@ export function generateEmptyAttestation(): Attestation {
     aggregationBitfield: Buffer.alloc(32),
     data: {
       slot: 0,
-      shard: 0,
       beaconBlockRoot: Buffer.alloc(32),
-      epochBoundaryRoot: Buffer.alloc(32),
-      shardBlockRoot: Buffer.alloc(32),
-      latestCrosslink: {
+      sourceEpoch: 0,
+      sourceRoot: Buffer.alloc(32),
+      targetRoot: Buffer.alloc(32),
+      shard: randBetween(0, 1024),
+      previousCrosslink: {
         epoch: 0,
-        shardBlockRoot: Buffer.alloc(32),
+        crosslinkDataRoot: Buffer.alloc(32),
       },
-      justifiedEpoch: 0,
-      justifiedBlockRoot: Buffer.alloc(32),
+      crosslinkDataRoot: Buffer.alloc(32),
     },
     custodyBitfield: Buffer.alloc(32),
     aggregateSignature: Buffer.alloc(96),

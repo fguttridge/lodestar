@@ -1,60 +1,25 @@
 import BN  from "bn.js";
-import {processAttestationInclusion} from "./attestation";
-import {BeaconState, Epoch, PendingAttestation, ValidatorIndex} from "../../../../types";
-import {processJustificationAndFinalization} from "./justification";
-import {processCrosslinksRewards} from "./crosslinks";
-import {BASE_REWARD_QUOTIENT, INACTIVITY_PENALTY_QUOTIENT} from "../../../../constants";
-import {getEffectiveBalance} from "../../../helpers/stateTransitionHelpers";
+import {BeaconState} from "../../../../types";
+import {getJustificationAndFinalizationDeltas} from "./justification";
+import {getCrosslinkDeltas} from "./crosslinks";
+import {setBalance, getBalance} from "../../../helpers/stateTransitionHelpers";
+import { bnMax } from "../../../../helpers/math";
 
-export function processRewardsAndPenalties(
-  state: BeaconState,
-  currentEpoch: Epoch,
-  nextEpoch: Epoch,
-  previousEpoch: Epoch,
-  previousTotalBalance: BN,
-  previousEpochAttestations: PendingAttestation[],
-  previousEpochAttesterIndices: ValidatorIndex[],
-  previousEpochBoundaryAttesterIndices: ValidatorIndex[],
-  previousEpochHeadAttesterIndices: ValidatorIndex[],
-  previousEpochAttestingBalance: BN,
-  previousEpochBoundaryAttestingBalance: BN,
-  previousEpochHeadAttestingBalance: BN): void {
-
-  // Rewards and penalties helpers
-  const baseRewardQuotient = previousTotalBalance.sqr().divn(BASE_REWARD_QUOTIENT);
-  const baseReward = (state: BeaconState, index: ValidatorIndex) => getEffectiveBalance(state, index).div(baseRewardQuotient).divn(5);
-  const inactivityPenalty = (state: BeaconState, index: ValidatorIndex, epochsSinceFinality: Epoch): BN => {
-    return baseReward(state, index)
-      .add(getEffectiveBalance(state, index))
-      .muln(epochsSinceFinality)
-      .divn(INACTIVITY_PENALTY_QUOTIENT)
-      .divn(2);
-  };
-
-  processJustificationAndFinalization(
-    state,
-    currentEpoch,
-    previousEpoch,
-    previousEpochAttesterIndices,
-    nextEpoch,
-    previousTotalBalance,
-    previousEpochBoundaryAttesterIndices,
-    previousEpochHeadAttesterIndices,
-    previousEpochAttestingBalance,
-    previousEpochBoundaryAttestingBalance,
-    previousEpochHeadAttestingBalance,
-    baseReward,
-    inactivityPenalty,
+export function applyRewards(state: BeaconState): void {
+  const [rewards1, penalties1] = getJustificationAndFinalizationDeltas(state);
+  const [rewards2, penalties2] = getCrosslinkDeltas(state);
+  state.validatorRegistry.forEach((_, index) =>
+    setBalance(
+      state,
+      index,
+      bnMax(
+        new BN(0),
+        getBalance(state, index)
+          .add(rewards1[index])
+          .add(rewards2[index])
+          .sub(penalties1[index])
+          .sub(penalties2[index])
+      )
+    )
   );
-
-  processAttestationInclusion(
-    state,
-    previousEpochAttestations,
-    previousEpochAttesterIndices,
-    baseReward,
-  );
-
-  processCrosslinksRewards(
-    state,
-  )
 }

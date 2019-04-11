@@ -34,9 +34,9 @@ export function getCommitteeAssignment(
   const loopEnd = epochStartSlot + SLOTS_PER_EPOCH;
 
   for (let slot = epochStartSlot; slot < loopEnd; slot++) {
-    const crosslinkCommittees = getCrosslinkCommitteesAtSlot(state, slot, registryChange);
+    const crosslinkCommittees = getCrosslinkCommitteesAtSlot(state, slot);
     const selectedCommittees = crosslinkCommittees.map((x) => {
-      if (x[0].contains(validatorIndex)) {
+      if (x[0].includes(validatorIndex)) {
         return x;
       }
     });

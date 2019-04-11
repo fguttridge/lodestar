@@ -4,31 +4,56 @@ import {hashTreeRoot} from "@chainsafe/ssz";
 import {
   BeaconBlock,
   BeaconState,
-  Crosslink,
   Deposit,
   Eth1Data,
   number64,
-  uint64,
   ValidatorIndex,
 } from "../../types";
 
 import {
   EMPTY_SIGNATURE, GENESIS_EPOCH, GENESIS_FORK_VERSION, GENESIS_SLOT, GENESIS_START_SHARD,
-  LATEST_ACTIVE_INDEX_ROOTS_LENGTH, LATEST_BLOCK_ROOTS_LENGTH, LATEST_RANDAO_MIXES_LENGTH,
-  LATEST_SLASHED_EXIT_LENGTH, MAX_DEPOSIT_AMOUNT, SHARD_COUNT, ZERO_HASH,
+  LATEST_ACTIVE_INDEX_ROOTS_LENGTH, LATEST_RANDAO_MIXES_LENGTH,
+  LATEST_SLASHED_EXIT_LENGTH, MAX_DEPOSIT_AMOUNT, SHARD_COUNT, ZERO_HASH, SLOTS_PER_HISTORICAL_ROOT,
 } from "../../constants";
 
 import {
-  generateSeed,
   getActiveValidatorIndices,
   getEffectiveBalance,
   processDeposit,
+  getTemporaryBlockHeader,
 } from "./stateTransitionHelpers";
 
 import {
   activateValidator,
 } from "./validatorStatus";
 
+
+/**
+ * Get an empty ``BeaconBlock``.
+ * @returns {BeaconBlock}
+ */
+export function getEmptyBlock(): BeaconBlock {
+  return {
+    slot: GENESIS_SLOT,
+    previousBlockRoot: ZERO_HASH,
+    stateRoot: ZERO_HASH,
+    body: {
+      randaoReveal: EMPTY_SIGNATURE,
+      eth1Data: {
+        depositRoot: ZERO_HASH,
+        depositCount: 0,
+        blockHash: ZERO_HASH,
+      },
+      proposerSlashings: [],
+      attesterSlashings: [],
+      attestations: [],
+      deposits: [],
+      voluntaryExits: [],
+      transfers: [],
+    },
+    signature: EMPTY_SIGNATURE,
+  };
+}
 
 /**
  * Generate the initial beacon chain state.
@@ -38,14 +63,9 @@ import {
  * @returns {BeaconState}
  */
 export function getGenesisBeaconState(
-  initialValidatorDeposits: Deposit[],
+  genesisValidatorDeposits: Deposit[],
   genesisTime: number64,
-  latestEth1Data: Eth1Data): BeaconState {
-
-  const initialCrosslinkRecord: Crosslink = {
-    epoch: GENESIS_EPOCH,
-    shardBlockRoot: ZERO_HASH,
-  };
+  genesisEth1Data: Eth1Data): BeaconState {
 
   const state: BeaconState = {
     // MISC
@@ -56,90 +76,58 @@ export function getGenesisBeaconState(
       currentVersion: GENESIS_FORK_VERSION,
       epoch: GENESIS_EPOCH,
     },
+
     // Validator registry
     validatorRegistry: [],
-    validatorBalances: [],
+    balances: [],
     validatorRegistryUpdateEpoch: GENESIS_EPOCH,
 
     // Randomness and committees
     latestRandaoMixes: Array.from({length: LATEST_RANDAO_MIXES_LENGTH}, () => ZERO_HASH),
-    previousShufflingStartShard: GENESIS_START_SHARD,
-    currentShufflingStartShard: GENESIS_START_SHARD,
-    previousShufflingEpoch: GENESIS_EPOCH,
-    currentShufflingEpoch: GENESIS_EPOCH,
-    previousShufflingSeed: ZERO_HASH,
-    currentShufflingSeed: ZERO_HASH,
+    latestStartShard: GENESIS_START_SHARD,
 
     // Finality
-    previousJustifiedEpoch: GENESIS_EPOCH,
-    justifiedEpoch: GENESIS_EPOCH,
+    previousEpochAttestations: [],
+    currentEpochAttestations: [],
+    previousJustifiedEpoch: GENESIS_EPOCH - 1,
+    currentJustifiedEpoch: GENESIS_EPOCH,
+    previousJustifiedRoot: ZERO_HASH,
+    currentJustifiedRoot: ZERO_HASH,
     justificationBitfield: new BN(0),
     finalizedEpoch: GENESIS_EPOCH,
+    finalizedRoot: ZERO_HASH,
 
     // Recent state
-    latestCrosslinks: Array.from({length: SHARD_COUNT}, () => initialCrosslinkRecord),
-    latestBlockRoots: Array.from({length: LATEST_BLOCK_ROOTS_LENGTH}, () => ZERO_HASH),
+    latestCrosslinks: Array.from({length: SHARD_COUNT}, () => ({
+      epoch: GENESIS_EPOCH,
+      crosslinkDataRoot: ZERO_HASH,
+    })),
+    latestBlockRoots: Array.from({length: SLOTS_PER_HISTORICAL_ROOT}, () => ZERO_HASH),
+    latestStateRoots: Array.from({length: SLOTS_PER_HISTORICAL_ROOT}, () => ZERO_HASH),
     latestActiveIndexRoots: Array.from({length: LATEST_ACTIVE_INDEX_ROOTS_LENGTH}, () => ZERO_HASH),
     latestSlashedBalances: Array.from({length: LATEST_SLASHED_EXIT_LENGTH}, () => new BN(0)),
-    latestAttestations: [],
-    batchedBlockRoots: [],
+    latestBlockHeader: getTemporaryBlockHeader(getEmptyBlock()),
+    historicalRoots: [],
 
-    // PoW receipt root
-    latestEth1Data,
+    // Ethereum 1.0 chain data
+    latestEth1Data: genesisEth1Data,
     eth1DataVotes: [],
     depositIndex: 0,
   };
 
-  // Process initial deposists
-  initialValidatorDeposits.forEach((deposit) => {
-    processDeposit(
-      state,
-      deposit.depositData.depositInput.pubkey,
-      deposit.depositData.amount,
-      deposit.depositData.depositInput.proofOfPossession,
-      deposit.depositData.depositInput.withdrawalCredentials,
-    );
-  });
+  // Process genesis deposists
+  genesisValidatorDeposits.forEach((deposit) => processDeposit(state, deposit));
 
-  // Process initial activations
-  for (let i = 0; i < state.validatorRegistry.length - 1; i++) {
-    // TODO: Unsafe usage of toNumber on i
+  // Process genesis activations
+  for (let i = 0; i < state.validatorRegistry.length; i++) {
     if (getEffectiveBalance(state, i).gten(MAX_DEPOSIT_AMOUNT)) {
       activateValidator(state, i, true);
     }
   }
 
   const genesisActiveIndexRoot = hashTreeRoot(getActiveValidatorIndices(state.validatorRegistry, GENESIS_EPOCH), [ValidatorIndex]);
-  for (let index: number; index < LATEST_ACTIVE_INDEX_ROOTS_LENGTH; index++) {
-    state.latestActiveIndexRoots[index] = genesisActiveIndexRoot;
+  for (let i = 0; i < LATEST_ACTIVE_INDEX_ROOTS_LENGTH; i++) {
+    state.latestActiveIndexRoots[i] = genesisActiveIndexRoot;
   }
-  state.currentShufflingSeed = generateSeed(state, GENESIS_EPOCH);
   return state;
 }
-
-/**
- * Get an empty ``BeaconBlock``.
- * @returns {BeaconBlock}
- */
-export function getEmptyBlock(): BeaconBlock {
-  return {
-    slot: GENESIS_SLOT,
-    parentRoot: ZERO_HASH,
-    stateRoot: ZERO_HASH,
-    randaoReveal: EMPTY_SIGNATURE,
-    eth1Data: {
-      depositRoot: ZERO_HASH,
-      blockHash: ZERO_HASH,
-    },
-    signature: EMPTY_SIGNATURE,
-    body: {
-      proposerSlashings: [],
-      attesterSlashings: [],
-      attestations: [],
-      deposits: [],
-      voluntaryExits: [],
-      transfers: [],
-    },
-  };
-}
-

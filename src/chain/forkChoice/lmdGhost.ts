@@ -1,3 +1,5 @@
+import BN from "bn.js";
+
 import {
   Attestation,
   BeaconBlock,
@@ -8,10 +10,6 @@ import {
   Validator,
   ValidatorIndex,
 } from "../../types";
-
-import {
-  FORK_CHOICE_BALANCE_INCREMENT,
-} from "../../constants";
 
 import {
   getActiveValidatorIndices,
@@ -102,11 +100,12 @@ export function lmdGhost(store: Store, startState: BeaconState, startBlock: Beac
   }
 
   // Inner function
-  function getVoteCount(block: BeaconBlock): int {
-    let sum = 0;
+  function getVoteCount(block: BeaconBlock): BN {
+    let sum = new BN(0);
     for (const target of attestationTargets) {
       if (getAncestor(store, target[1], block.slot) === block) {
-        sum += Math.floor(getEffectiveBalance(startState, target[0]).toNumber() / FORK_CHOICE_BALANCE_INCREMENT);
+        sum = sum.add(
+          startState.validatorRegistry[target.validatorIndex].highBalance);
       }
     }
     return sum;

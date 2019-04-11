@@ -1,32 +1,31 @@
-import {BeaconState, Crosslink, CrosslinkCommittee, Epoch, PendingAttestation, Slot} from "../../../types";
+import {BeaconState, Crosslink} from "../../../types";
+import { MAX_CROSSLINK_EPOCHS, GENESIS_EPOCH } from "../../../constants";
 import {
   getCrosslinkCommitteesAtSlot, getEpochStartSlot, getTotalBalance,
-  slotToEpoch
+  slotToEpoch,
+  getCurrentEpoch
 } from "../../helpers/stateTransitionHelpers";
-import BN from "bn.js";
-import {winningRoot} from "./helpers";
+import {getWinningRootAndParticipants} from "./helpers";
 
-export function processCrosslinks(
-  state: BeaconState,
-  previousEpoch: Epoch,
-  nextEpoch: Epoch,
-  previousEpochAttestations: PendingAttestation[],
-  currentEpochAttestations: PendingAttestation[]): void {
+export function processCrosslinks(state: BeaconState): void {
+  const currentEpoch = getCurrentEpoch(state);
+  const previousEpoch = Math.max(currentEpoch - 1, GENESIS_EPOCH);
+  const nextEpoch = currentEpoch + 1;
 
   const start = getEpochStartSlot(previousEpoch);
   const end = getEpochStartSlot(nextEpoch);
   for (let slot = start; slot < end; slot++) {
-    getCrosslinkCommitteesAtSlot(state, slot).map((value: CrosslinkCommittee) => {
-      const { shard, validatorIndices } = value;
-      // TODO Complete totalAttestingBalance to complete below
-      // const newCrossLink: Crosslink = {
-      //   epoch: slotToEpoch(new BN(slot)),
-      //   shardBlockRoot: winningRoot(state, shard, previousEpochAttestations, currentEpochAttestations, validatorIndices)
-      // };
-
-      // if (totalAttestingBalance(validatorIndices).muln(3).gte(getTotalBalance(state, validatorIndices).muln(2))) {
-      //   state.latestCrosslinks[shard.toNumber()] =  newCrossLink;
-      // }
+    getCrosslinkCommitteesAtSlot(state, slot).forEach(([crosslinkCommittee, shard]) => {
+      const [winningRoot, participants] = getWinningRootAndParticipants(state, shard);
+      const participatingBalance = getTotalBalance(state, participants);
+      const totalBalance = getTotalBalance(state, crosslinkCommittee);
+      if (participatingBalance.muln(3).gte(totalBalance.muln(2))) {
+        const c: Crosslink = {
+          epoch: Math.min(slotToEpoch(slot), state.latestCrosslinks[shard].epoch + MAX_CROSSLINK_EPOCHS),
+          crosslinkDataRoot: winningRoot,
+        };
+        state.latestCrosslinks[shard] = c;
+      }
     });
   }
 }

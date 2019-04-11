@@ -1,0 +1,75 @@
+// numeric
+
+hash(value: bytes): bytes32 {
+intToBytes(value: BN | number, length: number): bytes {
+intSqrt(n: int): int {
+isPowerOfTwo(value: number): boolean {
+
+// slot/epoch
+
+slotToEpoch(slot: Slot): Epoch {
+getCurrentEpoch(state: BeaconState): Epoch {
+getPreviousEpoch(state: BeaconState): Epoch {
+getEpochStartSlot(epoch: Epoch): Slot {
+getEntryExitEffectEpoch(epoch: Epoch): Epoch {
+
+// validator
+
+isActiveValidator(validator: Validator, epoch: Epoch): boolean {
+getActiveValidatorIndices(validators: Validator[], epoch: Epoch): ValidatorIndex[] {
+
+// 
+
+split<T>(values: T[], splitCount: int): T[][] {
+getShuffling(seed: bytes32, validators: Validator[], slot: Slot): ValidatorIndex[][] {
+
+// committee
+
+getEpochCommitteeCount(activeValidatorCount: int): int {
+getPreviousEpochCommitteeCount(state: BeaconState): int {
+getCurrentEpochCommitteeCount(state: BeaconState): int {
+getNextEpochCommitteeCount(state: BeaconState): int {
+getCrosslinkCommitteesAtSlot(state: BeaconState, slot: Slot, registryChange: boolean = false): CrosslinkCommittee[] {
+
+// randao
+
+getRandaoMix(state: BeaconState, epoch: Epoch): bytes32 {
+getActiveIndexRoot(state: BeaconState, epoch: Epoch): bytes32 {
+generateSeed(state: BeaconState, epoch: Epoch): bytes32 {
+
+// 
+
+getBlockRoot(state: BeaconState, slot: Slot): bytes32 {
+getBeaconProposerIndex(state: BeaconState, slot: Slot): int {
+merkleRoot(values: bytes32[]): bytes32 {
+
+// attestation/balance
+
+getAttestationParticipants(state: BeaconState, attestationData: AttestationData, bitfield: bytes): ValidatorIndex[] {
+getEffectiveBalance(state: BeaconState, index: ValidatorIndex): Gwei {
+getTotalBalance(state: BeaconState, validators: ValidatorIndex[]): Gwei {
+
+// fork
+
+getForkVersion(fork: Fork, epoch: Epoch): number64 {
+getDomain(fork: Fork, epoch: Epoch, domainType: int): uint64 {
+
+// bitfield
+
+getBitfieldBit(bitfield: bytes, i: int): int {
+verifyBitfield(bitfield: bytes, committeeSize: int): bool {
+
+// slashing
+
+isDoubleVote(attestationData1: AttestationData, attestationData2: AttestationData): boolean {
+isSurroundVote(attestationData1: AttestationData, attestationData2: AttestationData): boolean {
+verifySlashableAttestation(state: BeaconState, slashableAttestation: SlashableAttestation): bool {
+
+// 
+
+verifyMerkleBranch(leaf: bytes32, branch: bytes32[], depth: int, index: int, root: bytes32): bool {
+validateProofOfPossession(
+
+// 
+
+processDeposit(

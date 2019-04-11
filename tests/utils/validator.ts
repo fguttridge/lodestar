@@ -16,9 +16,10 @@ export function generateValidator(activation?: number, exit?: number): Validator
     withdrawalCredentials: Buffer.alloc(65),
     activationEpoch,
     exitEpoch: exit || randNum(),
-    withdrawalEpoch: randNum(),
-    slashedEpoch: randNum(),
-    statusFlags: new BN(randNum()),
+    withdrawableEpoch: randNum(),
+    initiatedExit: false,
+    slashed: false,
+    highBalance: new BN(0),
   };
 }
 

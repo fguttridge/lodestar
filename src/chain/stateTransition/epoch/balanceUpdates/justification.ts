@@ -1,93 +1,67 @@
-import {getActiveValidatorIndices, isActiveValidator} from "../../../helpers/stateTransitionHelpers";
-import {MIN_ATTESTATION_INCLUSION_DELAY} from "../../../../constants";
-import {BeaconState, Epoch, ValidatorIndex} from "../../../../types";
+import {isActiveValidator, getCurrentEpoch, getBeaconProposerIndex} from "../../../helpers/stateTransitionHelpers";
+import {MIN_ATTESTATION_INCLUSION_DELAY, PROPOSER_REWARD_QUOTIENT} from "../../../../constants";
+import {BeaconState, Gwei} from "../../../../types";
 import BN from "bn.js";
-import {inclusionDistance} from "../helpers";
+import {inclusionDistance, getPreviousEpochBoundaryAttestations, getAttestingBalance, getPreviousTotalBalance, getPreviousEpochMatchingHeadAttestations, getAttestingIndices, getBaseReward, getInactivityPenalty, inclusionSlot} from "../helpers";
 
-export function processJustificationAndFinalization(
-  state: BeaconState,
-  currentEpoch: Epoch,
-  previousEpoch: Epoch,
-  previousEpochAttesterIndices: ValidatorIndex[],
-  nextEpoch: Epoch,
-  previousTotalBalance: BN,
-  previousEpochBoundaryAttesterIndices: ValidatorIndex[],
-  previousEpochHeadAttesterIndices: ValidatorIndex[],
-  previousEpochAttestingBalance: BN,
-  previousEpochBoundaryAttestingBalance: BN,
-  previousEpochHeadAttestingBalance: BN,
-  baseReward: Function,
-  inactivityPenalty: Function): void {
+export function getJustificationAndFinalizationDeltas(state: BeaconState): [Gwei[], Gwei[]] {
+  const currentEpoch = getCurrentEpoch(state);
+  const epochsSinceFinality = currentEpoch + 1 - state.finalizedEpoch;
+  const rewards = Array.from({length: state.validatorRegistry.length}, () => new BN(0));
+  const penalties = Array.from({length: state.validatorRegistry.length}, () => new BN(0));
+  const boundaryAttestations = getPreviousEpochBoundaryAttestations(state);
+  const boundaryAttestingBalance = getAttestingBalance(state, boundaryAttestations);
+  const totalBalance = getPreviousTotalBalance(state);
+  const totalAttestingBalance = getAttestingBalance(state, state.previousEpochAttestations);
+  const matchingHeadAttestations = getPreviousEpochMatchingHeadAttestations(state);
+  const matchingHeadBalance = getAttestingBalance(state, matchingHeadAttestations);
+  const eligibleValidators = state.validatorRegistry
+    .map((v, index) => (isActiveValidator(v, currentEpoch) || (v.slashed && currentEpoch < v.withdrawableEpoch))
+      ? index
+      : undefined)
+    .filter(i => i !== undefined);
 
-  // Justification and finalization
-  const validators = getActiveValidatorIndices(state.validatorRegistry, previousEpoch);
-  const epochsSinceFinality = nextEpoch - state.finalizedEpoch;
-
-  // CASE 1
-  if (epochsSinceFinality < 4) {
-    // Expected FFG source
-    for (let index of previousEpochAttesterIndices) {
-      // IFF validator is active and they were not in previousEpochAttesterIndices slash
-      if (isActiveValidator(state.validatorRegistry[index], previousEpoch) && !previousEpochAttesterIndices.includes(index)) {
-        state.validatorBalances[index] = state.validatorBalances[index].sub(baseReward(state, index));
-      } else {
-        state.validatorBalances[index] = state.validatorBalances[index].add(baseReward(state, index).mul(previousEpochAttestingBalance).div(previousTotalBalance));
-      }
+  const previousEpochAttestingIndices = getAttestingIndices(state, state.previousEpochAttestations);
+  const boundaryAttestingIndices = getAttestingIndices(state, boundaryAttestations);
+  const matchingHeadAttestingIndices = getAttestingIndices(state, matchingHeadAttestations);
+  eligibleValidators.forEach((index) => {
+    const baseReward = getBaseReward(state, index);
+    // Expected FFG Source
+    if (previousEpochAttestingIndices.includes(index)) {
+      rewards[index] = rewards[index].add(
+        baseReward.mul(totalAttestingBalance).div(totalBalance));
+      // Inclusion speed bonus
+      rewards[index] = rewards[index].add(
+        baseReward.muln(MIN_ATTESTATION_INCLUSION_DELAY).divn(inclusionDistance(state, index)));
+    } else {
+      penalties[index] = penalties[index].add(baseReward);
     }
-
     // Expected FFG target
-    for (let index of previousEpochBoundaryAttesterIndices) {
-      // IFF validator is active and they were not in previousEpochAttesterIndices slash
-      if (isActiveValidator(state.validatorRegistry[index], previousEpoch) && !previousEpochBoundaryAttesterIndices.includes(index)) {
-        state.validatorBalances[index] = state.validatorBalances[index].sub(baseReward(state, index));
-      } else {
-        state.validatorBalances[index] = state.validatorBalances[index].add(baseReward(state, index).mul(previousEpochBoundaryAttestingBalance).div(previousTotalBalance));
-      }
+    if (boundaryAttestingIndices.includes(index)) {
+      rewards[index] = rewards[index].add(
+        baseReward.mul(boundaryAttestingBalance).div(totalBalance));
+    } else {
+      penalties[index] = penalties[index].add(
+        getInactivityPenalty(state, index, epochsSinceFinality));
     }
-
-    // Expected beacon chain head
-    for (let index of previousEpochHeadAttesterIndices) {
-      // IFF validator is active and they were not in previousEpochAttesterIndices slash
-      if (isActiveValidator(state.validatorRegistry[index], previousEpoch) && !previousEpochHeadAttesterIndices.includes(index)) {
-        state.validatorBalances[index] = state.validatorBalances[index].sub(baseReward(state, index));
-      } else {
-        state.validatorBalances[index] = state.validatorBalances[index].add(baseReward(state, index).mul(previousEpochHeadAttestingBalance).div(previousTotalBalance));
-      }
+    // Expected head
+    if (matchingHeadAttestingIndices.includes(index)) {
+      rewards[index] = rewards[index].add(
+        baseReward.mul(matchingHeadBalance).div(totalBalance));
+    } else {
+      penalties[index] = penalties[index].add(baseReward);
     }
-
-    // Inclusion distance
-    for (let index of previousEpochAttesterIndices) {
-      // IFF validator is active and they were not in previousEpochAttesterIndices slash
-      state.validatorBalances[index] = state.validatorBalances[index].add(baseReward(state,index).muln(MIN_ATTESTATION_INCLUSION_DELAY).div(inclusionDistance(state, index)));
+    // Proposer bonus
+    if (previousEpochAttestingIndices.includes(index)) {
+      const proposerIndex = getBeaconProposerIndex(state, inclusionSlot(state, index));
+      rewards[proposerIndex] = rewards[proposerIndex].add(
+        baseReward.divn(PROPOSER_REWARD_QUOTIENT));
     }
-  // CASE 2
-  } else if (epochsSinceFinality > 4) {
-    for (let index of previousEpochAttesterIndices) {
-      if (isActiveValidator(state.validatorRegistry[index], previousEpoch) && !previousEpochAttesterIndices.includes(index)) {
-        state.validatorBalances[index] = state.validatorBalances[index].sub(inactivityPenalty(state, index, epochsSinceFinality));
-      }
+    // Take away max rewards if we're not finalizing
+    if (epochsSinceFinality > 4) {
+      penalties[index] = penalties[index].add(
+        baseReward.muln(4));
     }
-
-    for (let index of previousEpochBoundaryAttesterIndices) {
-      if (isActiveValidator(state.validatorRegistry[index], previousEpoch) && !previousEpochBoundaryAttesterIndices.includes(index)) {
-        state.validatorBalances[index] = state.validatorBalances[index].sub(inactivityPenalty(state, index, epochsSinceFinality));
-      }
-    }
-
-    for (let index of previousEpochHeadAttesterIndices) {
-      if (isActiveValidator(state.validatorRegistry[index], previousEpoch) && !previousEpochHeadAttesterIndices.includes(index)) {
-        state.validatorBalances[index] = state.validatorBalances[index].sub(baseReward(state, index));
-      }
-    }
-
-    for (let index of previousEpochAttesterIndices) {
-      if (isActiveValidator(state.validatorRegistry[index], previousEpoch) && state.validatorRegistry[index].slashedEpoch <= currentEpoch) {
-        state.validatorBalances[index] = state.validatorBalances[index].sub(inactivityPenalty(state, index, epochsSinceFinality).muln(2).add(baseReward(state, index)));
-      }
-    }
-
-    for (let index of previousEpochAttesterIndices) {
-      state.validatorBalances[index] = state.validatorBalances[index].sub(baseReward(state, index).sub(baseReward(state,index)).muln(MIN_ATTESTATION_INCLUSION_DELAY).div(inclusionDistance(state, index)));
-    }
-  }
+  });
+  return [rewards, penalties];
 }

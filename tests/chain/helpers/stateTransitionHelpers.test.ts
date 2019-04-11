@@ -4,10 +4,10 @@ import { assert } from "chai";
 import {
   GENESIS_EPOCH,
   GENESIS_SLOT,
-  LATEST_BLOCK_ROOTS_LENGTH,
   LATEST_RANDAO_MIXES_LENGTH,
   SLOTS_PER_EPOCH,
   TARGET_COMMITTEE_SIZE,
+  SLOTS_PER_HISTORICAL_ROOT,
 } from "../../../src/constants";
 import {
   getActiveValidatorIndices,
@@ -16,7 +16,8 @@ import {
   getDomain,
   getEpochCommitteeCount,
   getEpochStartSlot,
-  getForkVersion, getRandaoMix,
+  getForkVersion,
+  getRandaoMix,
   hash,
   intToBytes,
   getPreviousEpoch,
@@ -24,11 +25,9 @@ import {
   intSqrt,
   isActiveValidator,
   isDoubleVote,
-  isPowerOfTwo,
   isSurroundVote,
   merkleRoot,
   slotToEpoch,
-  split,
 } from "../../../src/chain/helpers/stateTransitionHelpers";
 import {BeaconState, Epoch, Fork, int, Slot, uint64, Validator, ValidatorIndex} from "../../../src/types";
 import {generateAttestationData} from "../../utils/attestation";
@@ -64,109 +63,6 @@ describe("intToBytes", () => {
       assert(intToBytes(input[0], input[1]).equals(output));
     });
   }
-});
-
-describe("Split", () => {
-  it("array of 0 should return empty", () => {
-    const array: any[] = [];
-    const answer = [[]];
-    const result = split(array, 1);
-    assert.deepEqual(result, answer);
-  });
-
-  it("array of 10 should split by a count of 1", () => {
-    const array = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-    const answer = [[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]];
-    const result = split(array, 1);
-    assert.deepEqual(result, answer);
-  });
-
-  it("array of 10 should split by a count of 2", () => {
-    const array = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-    const answer = [[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]];
-    const result = split(array, 2);
-    assert.deepEqual(result, answer);
-  });
-
-  it("array of 10 should split by a count of 3", () => {
-    const array = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-    const answer = [[1, 2, 3], [4, 5, 6], [7, 8, 9, 10]];
-    const result = split(array, 3);
-    assert.deepEqual(result, answer);
-  });
-
-  it("array of 10 should split by a count of 4", () => {
-    const array = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-    const answer = [[1, 2], [3, 4, 5], [6, 7], [8, 9, 10]];
-    const result = split(array, 4);
-    assert.deepEqual(result, answer);
-  });
-
-  it("array of 7 should split by a count of 1", () => {
-    const array = [1, 2, 3, 4, 5, 6, 7];
-    const answer = [[1, 2, 3, 4, 5, 6, 7]];
-    const result = split(array, 1);
-    assert.deepEqual(result, answer);
-  });
-
-  it("array of 7 should split by a count of 2", () => {
-    const array = [1, 2, 3, 4, 5, 6, 7];
-    const answer = [[1, 2, 3], [4, 5, 6, 7]];
-    const result = split(array, 2);
-    assert.deepEqual(result, answer);
-  });
-
-  it("array of 7 should split by a count of 3", () => {
-    const array = [1, 2, 3, 4, 5, 6, 7];
-    const answer = [[1, 2], [3, 4], [5, 6, 7]];
-    const result = split(array, 3);
-    assert.deepEqual(result, answer);
-  });
-
-  it("array of 7 should split by a count of 4", () => {
-    const array = [1, 2, 3, 4, 5, 6, 7];
-    const answer = [[1], [2, 3], [4, 5], [6, 7]];
-    const result = split(array, 4);
-    assert.deepEqual(result, answer);
-  });
-});
-
-describe("isPowerOfTwo", () => {
-  it("0 should return false", () => {
-    const result = isPowerOfTwo(0);
-    assert.equal(result, false, "Should have returned false!");
-  });
-
-  it("1 should return true", () => {
-    const result = isPowerOfTwo(1);
-    assert.equal(result, true, "Should have returned true!");
-  });
-
-  it("2 should return true", () => {
-    const result = isPowerOfTwo(2);
-    assert.equal(result, true, "Should have returned true!");
-  });
-
-  it("3 should return false", () => {
-    const result = isPowerOfTwo(3);
-    assert.equal(result, false, "Should have returned false!");
-  });
-
-  it("Numbers close to 2**32 should return false", () => {
-    for (let i = 2; i < 32; i++) {
-      const powOfTwo = 2 ** i;
-      const result = isPowerOfTwo(powOfTwo);
-      assert.equal(result, true, "Should have returned true!");
-      const result1 = isPowerOfTwo(powOfTwo - 1);
-      assert.equal(result1, false, "Should have returned false!");
-      const result2 = isPowerOfTwo(powOfTwo + 1);
-      assert.equal(result2, false, "Should have returned false!");
-    }
-  });
-
-  it("Should throw if a negative number is passed in", () => {
-    assert.throws(() => { isPowerOfTwo(-1); });
-  });
 });
 
 describe("intSqrt", () => {
@@ -428,34 +324,34 @@ describe("isActiveValidator", () => {
 describe("getForkVersion", () => {
   const fork: Fork = {
     epoch: 12,
-    previousVersion: 4,
-    currentVersion: 5,
+    previousVersion: Buffer.from([4, 0, 0, 0]),
+    currentVersion: Buffer.from([5, 0, 0, 0]),
   };
 
-  const four = 4;
-  const five = 5;
+  const four = Buffer.from([4, 0, 0, 0]);
+  const five = Buffer.from([5, 0, 0, 0]);
 
   it("epoch after fork epoch returns current fork version", () => {
     const result = getForkVersion(fork, 8);
-    assert.equal(result, four);
+    assert(result.equals(four));
   });
 
   it("epoch after fork epoch returns current fork version", () => {
     const result = getForkVersion(fork, 13);
-    assert.equal(result, five);
+    assert(result.equals(five));
   });
 
   it("epoch after fork epoch returns current fork version", () => {
     const result = getForkVersion(fork, 12);
-    assert.equal(result, five);
+    assert(result.equals(five));
   });
 });
 
 describe("getDomain", () => {
   const fork: Fork = {
     epoch: 12,
-    previousVersion: 4,
-    currentVersion: 5,
+    previousVersion: Buffer.from([4, 0, 0, 0]),
+    currentVersion: Buffer.from([5, 0, 0, 0]),
   };
 
   const constant: uint64 = new BN(2 ** 32);
@@ -556,7 +452,7 @@ describe("getTotalBalance", () => {
     const num = 5;
     const validators: Validator[] = generateValidators(num);
     const balances: uint64[] = Array.from({length: num}, () => new BN(500));
-    const state: BeaconState = generateState({ validatorRegistry: validators, validatorBalances: balances });
+    const state: BeaconState = generateState({ validatorRegistry: validators, balances });
     const validatorIndices: ValidatorIndex[] = Array.from({length: num}, (_, i) => i);
 
     const result = getTotalBalance(state, validatorIndices);
@@ -568,7 +464,7 @@ describe("getTotalBalance", () => {
     const num = 5;
     const validators: Validator[] = generateValidators(num);
     const balances: uint64[] = Array.from({length: num}, () => new BN(0));
-    const state: BeaconState = generateState({ validatorRegistry: validators, validatorBalances: balances });
+    const state: BeaconState = generateState({ validatorRegistry: validators, balances });
     const validatorIndices: ValidatorIndex[] = Array.from({length: num}, (_, i) => i);
 
     const result = getTotalBalance(state, validatorIndices);
@@ -666,8 +562,8 @@ describe("getBlockRoot", () => {
     const state = generateState({slot: GENESIS_SLOT})
     assert.throws(() => getBlockRoot(state, GENESIS_SLOT), "")
   })
-  it("should fail if slot is not within LATEST_BLOCK_ROOTS_LENGTH of current slot", () => {
-    const state = generateState({slot: GENESIS_SLOT + LATEST_BLOCK_ROOTS_LENGTH + 1})
+  it("should fail if slot is not within SLOTS_PER_HISTORICAL_ROOT of current slot", () => {
+    const state = generateState({slot: GENESIS_SLOT + SLOTS_PER_HISTORICAL_ROOT + 1})
     assert.throws(() => getBlockRoot(state, GENESIS_SLOT), "")
   })
 })

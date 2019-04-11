@@ -1,100 +1,88 @@
 import assert from "assert";
 
-import {serialize, hashTreeRoot} from "@chainsafe/ssz";
+import {serialize} from "@chainsafe/ssz";
 
 import {
-  AttestationDataAndCustodyBit,
   BeaconBlock,
   BeaconState,
   Crosslink,
   PendingAttestation,
+  Attestation,
 } from "../../../types";
 
 import {
-  Domain,
   MAX_ATTESTATIONS,
   MIN_ATTESTATION_INCLUSION_DELAY,
   SLOTS_PER_EPOCH,
   ZERO_HASH,
+  GENESIS_SLOT,
+  MAX_CROSSLINK_EPOCHS,
 } from "../../../constants";
 
 import {
-  getAttestationParticipants,
-  getBitfieldBit,
-  getBlockRoot,
-  getCrosslinkCommitteesAtSlot,
   getCurrentEpoch,
-  getDomain,
-  getEpochStartSlot,
   slotToEpoch,
+  getPreviousEpoch,
+  verifyIndexedAttestation,
+  convertToIndexed,
 } from "../../helpers/stateTransitionHelpers";
 
-import {blsAggregatePubkeys, blsVerifyMultiple} from "../../../stubs/bls";
+
+export function processAttestation(state: BeaconState, attestation: Attestation): void {
+  assert(Math.max(GENESIS_SLOT, state.slot - SLOTS_PER_EPOCH) <= attestation.data.slot);
+  assert(attestation.data.slot <= state.slot - MIN_ATTESTATION_INCLUSION_DELAY);
+
+  // Check target epoch, source epoch, and source root
+  const currentEpoch = getCurrentEpoch(state);
+  const previousEpoch = getPreviousEpoch(state);
+  const targetEpoch = slotToEpoch(attestation.data.slot);
+  assert(
+    currentEpoch === targetEpoch ||
+    previousEpoch === targetEpoch
+  );
+  assert(
+    state.currentJustifiedEpoch === attestation.data.sourceEpoch ||
+    state.previousJustifiedEpoch === attestation.data.sourceEpoch
+  );
+  assert(
+    state.currentJustifiedRoot.equals(attestation.data.sourceRoot) ||
+    state.previousJustifiedRoot.equals(attestation.data.sourceRoot)
+  );
+
+  // Check crosslink data
+  assert(attestation.data.crosslinkDataRoot.equals(ZERO_HASH)) // TO BE REMOVED IN PHASE 1
+
+  const serializedCrosslink = serialize(state.latestCrosslinks[attestation.data.shard], Crosslink);
+  assert(
+    serializedCrosslink.equals( // Case 1: latest crosslink matches previous crosslink
+      serialize(attestation.data.previousCrosslink, Crosslink)) ||
+    serialize(state.latestCrosslinks[attestation.data.shard], Crosslink).equals( // Case 2: latest crosslink matches current crosslink
+      serialize({
+        crosslinkDataRoot: attestation.data.crosslinkDataRoot,
+        epoch: Math.min(slotToEpoch(attestation.data.slot), attestation.data.previousCrosslink.epoch + MAX_CROSSLINK_EPOCHS)
+      }, Crosslink)));
+
+  // Check signature and bitfields
+  assert(verifyIndexedAttestation(state, convertToIndexed(state, attestation)));
+
+  // Cache pending attestation
+  const pendingAttestation: PendingAttestation = {
+    data: attestation.data,
+    aggregationBitfield: attestation.aggregationBitfield,
+    custodyBitfield: attestation.custodyBitfield,
+    inclusionSlot: state.slot,
+  };
+
+  if (targetEpoch === currentEpoch) {
+    state.currentEpochAttestations.push(pendingAttestation);
+  } else {
+    state.previousEpochAttestations.push(pendingAttestation);
+  }
+}
 
 export default function processAttestations(state: BeaconState, block: BeaconBlock): void {
   assert(block.body.attestations.length <= MAX_ATTESTATIONS);
   for (const attestation of block.body.attestations) {
-    assert(attestation.data.slot <= state.slot - MIN_ATTESTATION_INCLUSION_DELAY &&
-      state.slot - MIN_ATTESTATION_INCLUSION_DELAY < attestation.data.slot + SLOTS_PER_EPOCH);
-    const justifiedEpoch = slotToEpoch(attestation.data.slot + 1) >= getCurrentEpoch(state) ?
-      state.justifiedEpoch : state.previousJustifiedEpoch;
-    assert(attestation.data.justifiedEpoch === justifiedEpoch);
-    assert(attestation.data.justifiedBlockRoot.equals(getBlockRoot(state, getEpochStartSlot(attestation.data.justifiedEpoch))));
-    const c: Crosslink = {
-      epoch: slotToEpoch(attestation.data.slot),
-      shardBlockRoot: attestation.data.shardBlockRoot,
-    };
-    assert(
-      serialize(state.latestCrosslinks[attestation.data.shard], Crosslink).equals(
-        serialize(attestation.data.latestCrosslink, Crosslink)) ||
-      serialize(state.latestCrosslinks[attestation.data.shard], Crosslink).equals(
-        serialize(c, Crosslink)));
-
-    // Remove this condition in Phase 1
-    assert((attestation.custodyBitfield.equals(Buffer.alloc(attestation.custodyBitfield.length))));
-    assert(attestation.aggregationBitfield.equals(Buffer.alloc(attestation.aggregationBitfield.length)));
-
-    const crosslinkCommittee = getCrosslinkCommitteesAtSlot(state, attestation.data.slot)
-      .filter(({shard}) => shard === attestation.data.shard)
-      .map(({validatorIndices}) => validatorIndices)[0];
-    for (let i = 0; i < crosslinkCommittee.length; i++) {
-      if (getBitfieldBit(attestation.aggregationBitfield, i) === 0b0) {
-        assert(getBitfieldBit(attestation.custodyBitfield, i) === 0b0);
-      }
-    }
-    const participants = getAttestationParticipants(state, attestation.data, attestation.aggregationBitfield);
-    const custodyBit1Participants = getAttestationParticipants(state, attestation.data, attestation.custodyBitfield);
-    const custodyBit0Participants = participants.filter((i) => custodyBit1Participants.find((i2) => i === i2));
-
-    const dataAndCustodyBit0: AttestationDataAndCustodyBit = {
-      data: attestation.data,
-      custodyBit: false,
-    };
-    const dataAndCustodyBit1: AttestationDataAndCustodyBit = {
-      data: attestation.data,
-      custodyBit: true,
-    };
-    const custodyBitsVerified = blsVerifyMultiple(
-      [
-        blsAggregatePubkeys(custodyBit0Participants.map((i) => state.validatorRegistry[i].pubkey)),
-        blsAggregatePubkeys(custodyBit1Participants.map((i) => state.validatorRegistry[i].pubkey)),
-      ],
-      [
-        hashTreeRoot(dataAndCustodyBit0, AttestationDataAndCustodyBit),
-        hashTreeRoot(dataAndCustodyBit1, AttestationDataAndCustodyBit),
-      ],
-      attestation.aggregateSignature,
-      getDomain(state.fork, slotToEpoch(attestation.data.slot), Domain.ATTESTATION),
-    );
-    assert(custodyBitsVerified);
-    // Remove the following conditional in Phase 1
-    assert(attestation.data.shardBlockRoot.equals(ZERO_HASH));
-    const p: PendingAttestation = {
-      data: attestation.data,
-      aggregationBitfield: attestation.aggregationBitfield,
-      custodyBitfield: attestation.custodyBitfield,
-      inclusionSlot: state.slot,
-    };
-    state.latestAttestations.push(p);
+    processAttestation(state, attestation);
   }
 }

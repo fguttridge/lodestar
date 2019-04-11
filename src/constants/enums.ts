@@ -1,8 +1,8 @@
 export enum Domain {
-  DEPOSIT = 0,
-  ATTESTATION = 1,
-  PROPOSAL = 2,
-  EXIT = 3,
-  RANDAO = 4,
+  BEACON_BLOCK = 0,
+  RANDAO = 1,
+  ATTESTATION = 2,
+  DEPOSIT = 3,
+  VOLUNTARY_EXIT = 4,
   TRANSFER = 5,
 }
