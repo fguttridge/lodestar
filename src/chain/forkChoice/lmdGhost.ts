@@ -2,7 +2,6 @@ import assert from "assert";
 import BN from "bn.js";
 
 import {
-  bytes,
   bytes32,
   Gwei,
   Slot,
@@ -49,7 +48,7 @@ class Node {
    */
   public children: Record<Root, Node>;
 
-  constructor({slot, blockRoot, parent}: {slot: Slot; blockRoot: Root; parent: Node}) {
+  public constructor({slot, blockRoot, parent}: {slot: Slot; blockRoot: Root; parent: Node}) {
     this.slot = slot;
     this.blockRoot = blockRoot;
     this.parent = parent;
@@ -193,7 +192,7 @@ export class LMDGHOST {
     }
   }
 
-  public addAttestation(blockRootBuf: bytes32, attester: ValidatorIndex, weight: Gwei) {
+  public addAttestation(blockRootBuf: bytes32, attester: ValidatorIndex, weight: Gwei): void {
     this.synced = false;
     this.aggregator.addAttestation({
       target: blockRootBuf.toString('hex'),
@@ -244,7 +243,6 @@ export class LMDGHOST {
     // If n has sufficient weight to not lose its position on the canonical chain
     //   (ie: n.weight + delta > (totalWeight + possible change) / 2
     // then the target will stay the same during this run, just propagate the weight adjustment
-    let totalWeight = (this.finalized ? this.finalized.weight : new BN(0));
     let cutOff = (this.finalized ? this.finalized.weight : new BN(0)).add(netDelta);
     changes.forEach(([node, delta]) => {
       let n = node;
